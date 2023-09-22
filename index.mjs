@@ -3,6 +3,13 @@ import { setTimeout } from 'timers/promises'
 import { Low } from 'lowdb'
 import { JSONFile } from 'lowdb/node'
 import { log } from 'console'
+import { Queue, Worker } from 'bullmq'
+import Redis from 'ioredis'
+// import 'dotenv/config'
+
+const connection = new Redis(process.env.REDIS_PATH, {
+	maxRetriesPerRequest: null,
+})
 const db = new Low(new JSONFile('ecommerce.json'), {})
 await db.read()
 
@@ -33,6 +40,13 @@ const extractText = (page, selector) => {
 		return document.querySelector(selector)?.innerHTML
 	}, selector)
 }
+new Worker(
+	'product',
+	async job => {
+		console.log(job.data, job.id)
+	},
+	{ connection }
+)
 
 for (let productLink of productLinks) {
 	if (db.data[productLink]) {
