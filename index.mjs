@@ -1,5 +1,16 @@
 import puppeteer, { Page } from 'puppeteer'
 import { setTimeout } from 'timers/promises'
+import { Low } from 'lowdb'
+import { JSONFile } from 'lowdb/node'
+import { log } from 'console'
+const db = new Low(new JSONFile('ecommerce.json'), {})
+await db.read()
+
+const saveToDB = async (id, productData) => {
+	db.data[id] = productData
+	await db.write()
+}
+
 const browser = await puppeteer.launch({
 	headless: false,
 	userDataDir: '/tmp/ecommerce-crawler',
@@ -24,6 +35,11 @@ const extractText = (page, selector) => {
 }
 
 for (let productLink of productLinks) {
+	if (db.data[productLink]) {
+		console.log('Item already exist')
+		continue
+	}
+	console.log(productLink)
 	const page = await browser.newPage()
 	await page.goto(productLink, { waitUntil: 'networkidle2', timeout: 60000 })
 	await page.waitForSelector('.ecomm-container')
@@ -46,7 +62,7 @@ for (let productLink of productLinks) {
 			variant,
 			price: await page.$eval('#productPrice', e => e.innerHTML),
 		})
-		console.log({
+		await saveToDB(productLink, {
 			productLink,
 			title,
 			tagline,
