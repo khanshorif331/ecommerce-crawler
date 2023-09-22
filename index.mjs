@@ -2,7 +2,6 @@ import puppeteer, { Page } from 'puppeteer'
 import { setTimeout } from 'timers/promises'
 import { Low } from 'lowdb'
 import { JSONFile } from 'lowdb/node'
-import { log } from 'console'
 import { Queue, Worker } from 'bullmq'
 import Redis from 'ioredis'
 // import 'dotenv/config'
@@ -11,7 +10,8 @@ const connection = new Redis(process.env.REDIS_PATH, {
 	maxRetriesPerRequest: null,
 })
 const db = new Low(new JSONFile('ecommerce.json'), {})
-await db.read()
+
+await db.write()
 
 const saveToDB = async (id, productData) => {
 	db.data[id] = productData
@@ -43,48 +43,49 @@ const extractText = (page, selector) => {
 new Worker(
 	'product',
 	async job => {
-		console.log(job.data, job.id)
+		const productLink = job.data.url
+		console.log(productLink)
+		const page = await browser.newPage()
+		await page.goto(productLink, {
+			waitUntil: 'networkidle2',
+			timeout: 60000,
+		})
+		await page.waitForSelector('.ecomm-container')
+		const title = await extractText(page, '.ecomm-container h1')
+		const tagline = await extractText(page, '.product-tagline')
+		const price = await extractText(page, '#productPrice')
+		const description = await extractText(page, '.product-desc')
+		// await page.close()
+
+		const variants = await page.evaluate(() => {
+			return [...document.querySelectorAll('.single-option-selector')].map(
+				e => e.value
+			)
+		})
+		const variantData = []
+		for (let variant of variants) {
+			await page.select('.single-option-selector', variant)
+			await setTimeout(100)
+			variantData.push({
+				variant,
+				price: await page.$eval('#productPrice', e => e.innerHTML),
+			})
+			await saveToDB(productLink, {
+				productLink,
+				title,
+				tagline,
+				price,
+				description,
+				variantData,
+			})
+		}
 	},
 	{ connection }
 )
+const myQueue = new Queue('product', { connection })
 
 for (let productLink of productLinks) {
-	if (db.data[productLink]) {
-		console.log('Item already exist')
-		continue
-	}
-	console.log(productLink)
-	const page = await browser.newPage()
-	await page.goto(productLink, { waitUntil: 'networkidle2', timeout: 60000 })
-	await page.waitForSelector('.ecomm-container')
-	const title = await extractText(page, '.ecomm-container h1')
-	const tagline = await extractText(page, '.product-tagline')
-	const price = await extractText(page, '#productPrice')
-	const description = await extractText(page, '.product-desc')
-	// await page.close()
-
-	const variants = await page.evaluate(() => {
-		return [...document.querySelectorAll('.single-option-selector')].map(
-			e => e.value
-		)
-	})
-	const variantData = []
-	for (let variant of variants) {
-		await page.select('.single-option-selector', variant)
-		await setTimeout(100)
-		variantData.push({
-			variant,
-			price: await page.$eval('#productPrice', e => e.innerHTML),
-		})
-		await saveToDB(productLink, {
-			productLink,
-			title,
-			tagline,
-			price,
-			description,
-			variantData,
-		})
-	}
+	myQueue.add(productLink, { url: productLink }, { jobId: productLink })
 }
 await browser.close()
 // await browser.close()
